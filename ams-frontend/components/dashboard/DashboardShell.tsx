@@ -144,7 +144,16 @@ export default function DashboardShell({
   }, [notificationCount, role]);
 
   useEffect(() => {
+    // Payment popups are served by the backend, so only trust messages from its origin.
+    let trustedPaymentOrigin = '';
+    try {
+      trustedPaymentOrigin = new URL(process.env.NEXT_PUBLIC_API_URL || '').origin;
+    } catch {
+      trustedPaymentOrigin = '';
+    }
+
     const paymentMessageHandler = (event: MessageEvent) => {
+      if (!trustedPaymentOrigin || event.origin !== trustedPaymentOrigin) return;
       try {
         const data = event.data;
         if (!data || typeof data !== 'object') return;

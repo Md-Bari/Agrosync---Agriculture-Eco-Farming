@@ -54,6 +54,8 @@ export default function RoleProfileEditor({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState('');
+  const [emailChangePassword, setEmailChangePassword] = useState('');
+  const emailChanged = form.email.trim().toLowerCase() !== (user.email ?? '').trim().toLowerCase();
   const [districts, setDistricts] = useState<BdLocationOption[]>([]);
   const [upazilas, setUpazilas] = useState<BdLocationOption[]>([]);
   const [selectedDistrictId, setSelectedDistrictId] = useState('');
@@ -231,11 +233,22 @@ export default function RoleProfileEditor({
     event.preventDefault();
     if (!editing) return;
     setSaving(true);
-    const result = await authService.updateRoleUser(user.id, { ...form, ...(getExtraPayload?.() ?? {}) });
-    setSaving(false);
-    setSaved(result.success ? 'Profile updated successfully.' : 'Failed to update profile.');
-    if (result.success) {
-      setEditing(false);
+    try {
+      const payload = {
+        ...form,
+        ...(getExtraPayload?.() ?? {}),
+        ...(emailChanged ? { currentPassword: emailChangePassword } : {}),
+      };
+      const result = await authService.updateRoleUser(user.id, payload);
+      setSaved(result.success ? 'Profile updated successfully.' : 'Failed to update profile.');
+      if (result.success) {
+        setEditing(false);
+        setEmailChangePassword('');
+      }
+    } catch (error) {
+      setSaved(error instanceof Error ? error.message : 'Failed to update profile.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -297,6 +310,19 @@ export default function RoleProfileEditor({
             <span className="form-label">Email</span>
             <input className="input-field mt-2 disabled:bg-gray-50 disabled:text-gray-500" disabled={!editing} type="email" value={form.email} onChange={(e) => updateField('email', e.target.value)} />
           </label>
+          {editing && emailChanged && (
+            <label className="block">
+              <span className="form-label">Current password (required to change email)</span>
+              <input
+                className="input-field mt-2"
+                type="password"
+                autoComplete="current-password"
+                value={emailChangePassword}
+                onChange={(e) => setEmailChangePassword(e.target.value)}
+                required
+              />
+            </label>
+          )}
           <label className="block">
             <span className="form-label">Phone</span>
             <input className="input-field mt-2 disabled:bg-gray-50 disabled:text-gray-500" disabled={!editing} value={form.phone} onChange={(e) => updateField('phone', e.target.value)} />

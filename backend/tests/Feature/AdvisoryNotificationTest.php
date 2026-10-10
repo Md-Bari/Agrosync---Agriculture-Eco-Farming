@@ -15,6 +15,18 @@ class AdvisoryNotificationTest extends TestCase
     {
         $this->artisan('migrate');
 
+        DB::table('tenants')->insert([
+            'id' => 'tenant_900',
+            'name' => 'Tenant 900',
+            'subdomain' => 'tenant-900',
+            'plan_tier' => 'basic',
+            'status' => 'active',
+            'farmer_count' => 1,
+            'mrr' => 999,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         DB::table('users')->insert([
             [
                 'public_id' => 'usr_far_900',
@@ -70,7 +82,7 @@ class AdvisoryNotificationTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $response = $this->postJson('/api/v1/advisory-cases', [
+        $response = $this->actingAsApiUser('usr_far_900')->postJson('/api/v1/advisory-cases', [
             'farmerId' => 'usr_far_900',
             'cropType' => 'Rice',
             'description' => 'Urgent crop issue',

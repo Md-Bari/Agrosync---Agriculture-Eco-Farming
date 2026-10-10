@@ -18,7 +18,7 @@ import {
   EyeOff,
   Phone,
 } from 'lucide-react';
-import { authService, DEMO_CREDENTIALS } from '@/services';
+import { authService, DEMO_CREDENTIALS, MOCK_MODE } from '@/services';
 import type { BdLocationOption } from '@/services/bdLocations';
 import { getDistrictsByDivision, getUpazilasByDistrictId } from '@/services/bdLocations';
 import { DASHBOARD_ROUTES } from '@/constants';
@@ -507,37 +507,39 @@ function AdminLoginContent() {
                 </div>
               </div>
 
-              <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div>
-                    <div className="text-sm font-semibold text-gray-800">Quick Demo {roleConfig.label}</div>
-                    <div className="text-xs text-gray-500">{DEMO_CREDENTIALS[selectedRole].email}</div>
-                  </div>
-                  <button type="button" onClick={handleResetDemoData} className="text-xs font-semibold text-forest hover:text-harvest flex items-center gap-1">
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Reset Demo
-                  </button>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-2">
-                  {ROLE_OPTIONS.map((role) => (
-                    <button
-                      key={role.value}
-                      type="button"
-                      onClick={() => handleQuickDemoAccess(role.value)}
-                      disabled={loading}
-                      className="rounded-xl border border-gray-200 bg-white px-3 py-3 text-left hover:border-forest/30 hover:bg-forest/5 transition-colors disabled:opacity-60"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold text-gray-800">{role.label}</div>
-                          <div className="text-[11px] text-gray-400">{DEMO_CREDENTIALS[role.value].email}</div>
-                        </div>
-                        <Rocket className="w-4 h-4 text-forest" />
-                      </div>
+              {MOCK_MODE && (
+                <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-800">Quick Demo {roleConfig.label}</div>
+                      <div className="text-xs text-gray-500">{DEMO_CREDENTIALS[selectedRole]?.email}</div>
+                    </div>
+                    <button type="button" onClick={handleResetDemoData} className="text-xs font-semibold text-forest hover:text-harvest flex items-center gap-1">
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Reset Demo
                     </button>
-                  ))}
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {ROLE_OPTIONS.map((role) => (
+                      <button
+                        key={role.value}
+                        type="button"
+                        onClick={() => handleQuickDemoAccess(role.value)}
+                        disabled={loading}
+                        className="rounded-xl border border-gray-200 bg-white px-3 py-3 text-left hover:border-forest/30 hover:bg-forest/5 transition-colors disabled:opacity-60"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-gray-800">{role.label}</div>
+                            <div className="text-[11px] text-gray-400">{DEMO_CREDENTIALS[role.value]?.email}</div>
+                          </div>
+                          <Rocket className="w-4 h-4 text-forest" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
               {info && <p className="text-green-600 text-sm mb-4">{info}</p>}

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Leaf, Phone, ArrowRight, ChevronLeft, ShieldCheck, Mail, Rocket, RotateCcw, Upload, X, Lock, Eye, EyeOff } from 'lucide-react';
-import { authService, DEMO_CREDENTIALS, farmerService } from '@/services';
+import { authService, DEMO_CREDENTIALS, farmerService, MOCK_MODE } from '@/services';
 import type { BdLocationOption } from '@/services/bdLocations';
 import { getDistrictsByDivision, getUpazilasByDistrictId } from '@/services/bdLocations';
 
@@ -407,27 +407,29 @@ export default function FarmerLoginPage() {
                 </div>
               </div>
 
-              <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div>
-                    <div className="text-sm font-semibold text-gray-800">Quick Demo Farmer</div>
-                    <div className="text-xs text-gray-500">{DEMO_CREDENTIALS.farmer.email}</div>
+              {MOCK_MODE && (
+                <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-800">Quick Demo Farmer</div>
+                      <div className="text-xs text-gray-500">{DEMO_CREDENTIALS.farmer?.email}</div>
+                    </div>
+                    <button type="button" onClick={handleResetDemoData} className="text-xs font-semibold text-forest hover:text-harvest flex items-center gap-1">
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Reset Demo
+                    </button>
                   </div>
-                  <button type="button" onClick={handleResetDemoData} className="text-xs font-semibold text-forest hover:text-harvest flex items-center gap-1">
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Reset Demo
+                  <button
+                    type="button"
+                    onClick={handleQuickDemoFarmer}
+                    disabled={loading}
+                    className="w-full rounded-xl border border-forest/20 bg-white px-4 py-3 text-sm font-semibold text-forest hover:bg-forest/5 disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    <Rocket className="w-4 h-4" />
+                    Open Demo Farmer Dashboard
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleQuickDemoFarmer}
-                  disabled={loading}
-                  className="w-full rounded-xl border border-forest/20 bg-white px-4 py-3 text-sm font-semibold text-forest hover:bg-forest/5 disabled:opacity-60 flex items-center justify-center gap-2"
-                >
-                  <Rocket className="w-4 h-4" />
-                  Open Demo Farmer Dashboard
-                </button>
-              </div>
+              )}
 
               {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
               {info && <p className="text-green-600 text-sm mb-4">{info}</p>}

@@ -26,10 +26,10 @@ class ApiCors
     private function headers(): array
     {
         return [
-            'Access-Control-Allow-Origin' => env('FRONTEND_URL', 'http://localhost:3000'),
+            'Access-Control-Allow-Origin' => config('app.frontend_url'),
+            'Vary' => 'Origin',
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With',
-            'Access-Control-Allow-Credentials' => 'true',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept',
         ];
     }
 }

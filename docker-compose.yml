@@ -1,0 +1,126 @@
+# AgroSync full stack: MySQL + Laravel API (php-fpm + nginx) + Next.js frontend + Mailpit.
+#
+#   cp .env.docker.example .env      # then set the passwords
+#   docker compose up -d --build
+#
+# Frontend http://localhost:3000 · API http://localhost:8000 · Mail inbox http://localhost:8025
+
+x-backend-env: &backend-env
+  APP_NAME: ${APP_NAME:-AgroSync}
+  APP_ENV: ${APP_ENV:-production}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_KEY: ${APP_KEY:-}
+  APP_URL: ${API_URL:-http://localhost:8000}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+  DB_CONNECTION: mysql
+  DB_HOST: db
+  DB_PORT: 3306
+  DB_DATABASE: ${DB_DATABASE:-agrosync}
+  DB_USERNAME: ${DB_USERNAME:-agrosync}
+  DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+
+  CACHE_STORE: database
+  SESSION_DRIVER: database
+  QUEUE_CONNECTION: sync
+
+  MAIL_MAILER: smtp
+  MAIL_HOST: ${MAIL_HOST:-mailpit}
+  MAIL_PORT: ${MAIL_PORT:-1025}
+  MAIL_USERNAME: ${MAIL_USERNAME:-null}
+  MAIL_PASSWORD: ${MAIL_PASSWORD:-null}
+  MAIL_SCHEME: ${MAIL_SCHEME:-null}
+  MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-no-reply@agrosync.local}
+  MAIL_FROM_NAME: ${APP_NAME:-AgroSync}
+
+  API_TOKEN_TTL_DAYS: ${API_TOKEN_TTL_DAYS:-7}
+  PAYMENTS_MOCK_ENABLED: ${PAYMENTS_MOCK_ENABLED:-false}
+  SSLCOMMERZ_STORE_ID: ${SSLCOMMERZ_STORE_ID:-}
+  SSLCOMMERZ_STORE_PASSWORD: ${SSLCOMMERZ_STORE_PASSWORD:-}
+  SSLCOMMERZ_SANDBOX: ${SSLCOMMERZ_SANDBOX:-true}
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  STRIPE_CURRENCY: ${STRIPE_CURRENCY:-usd}
+  WEATHER_API_KEY: ${WEATHER_API_KEY:-}
+
+  SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-agrosync}
+      MYSQL_USER: ${DB_USERNAME:-agrosync}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    # Not published to the host: only the backend talks to the database.
+
+  backend:
+    build:
+      context: ./backend
+      target: app
+    image: agrosync-backend
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - backend_storage:/var/www/html/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  web:
+    build:
+      context: ./backend
+      target: web
+    image: agrosync-web
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/up > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./ams-frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_APP_URL: ${FRONTEND_URL:-http://localhost:3000}
+        NEXT_PUBLIC_APP_NAME: ${APP_NAME:-AgroSync}
+        NEXT_PUBLIC_ENABLE_MOCK_API: "false"
+    image: agrosync-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      web:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    restart: unless-stopped
+    ports:
+      # Web inbox for OTP emails; bound to localhost only.
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
+
+volumes:
+  db_data:
+  backend_storage:

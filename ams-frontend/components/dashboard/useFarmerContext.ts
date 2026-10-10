@@ -58,6 +58,7 @@ export function useFarmerContext() {
         .then((notifications) => {
           setUnreadNotifications(notifications.filter((notification) => !notification.isRead).length);
         })
+        .catch(() => undefined)
         .finally(() => setLoading(false));
     };
 

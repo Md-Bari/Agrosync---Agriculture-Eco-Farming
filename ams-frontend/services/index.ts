@@ -49,15 +49,76 @@ class ApiRequestError extends Error {
   }
 }
 
+/**
+ * Local mock mode (browser-only fake data, demo logins, OTP 123456) is opt-in for UI
+ * development without a backend. It is never used unless explicitly enabled, so a
+ * misconfigured or unreachable API fails loudly instead of silently faking success.
+ */
+export const MOCK_MODE = process.env.NEXT_PUBLIC_ENABLE_MOCK_API === 'true';
+
 const shouldFallbackToMock = (error: unknown) => {
+  if (!MOCK_MODE) return false;
   if (!API_V1) return true;
   return error instanceof ApiRequestError && error.isNetworkError;
 };
 
+// ------------------------------------------------------------
+// API bearer tokens, one per role so several role dashboards can be open at once.
+// ------------------------------------------------------------
+const AUTH_TOKENS_STORAGE_KEY = 'ams_api_tokens';
+const MANAGED_ROLES: ManagedUserRole[] = ['farmer', 'officer', 'vendor', 'company', 'admin'];
+
+const readAuthTokens = (): Partial<Record<ManagedUserRole, string>> => {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(AUTH_TOKENS_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const writeAuthTokens = (tokens: Partial<Record<ManagedUserRole, string>>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(AUTH_TOKENS_STORAGE_KEY, JSON.stringify(tokens));
+  } catch {
+    // Storage unavailable: the session simply will not persist across reloads.
+  }
+};
+
+const setAuthToken = (role: ManagedUserRole, token?: string) => {
+  const tokens = readAuthTokens();
+  if (token) {
+    tokens[role] = token;
+  } else {
+    delete tokens[role];
+  }
+  writeAuthTokens(tokens);
+};
+
+/** The role whose dashboard is open in this tab, if any. */
+const roleFromCurrentPath = (): ManagedUserRole | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const match = window.location.pathname.match(/^\/dashboard\/(\w+)/);
+  const role = match?.[1] as ManagedUserRole | undefined;
+  return role && MANAGED_ROLES.includes(role) ? role : undefined;
+};
+
+const currentAuthToken = (): { role?: ManagedUserRole; token?: string } => {
+  const tokens = readAuthTokens();
+  const pathRole = roleFromCurrentPath();
+  if (pathRole) return { role: pathRole, token: tokens[pathRole] };
+
+  const fallbackRole = MANAGED_ROLES.find((role) => tokens[role]);
+  return { role: fallbackRole, token: fallbackRole ? tokens[fallbackRole] : undefined };
+};
+
 async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!API_V1) {
-    throw new ApiRequestError('Backend API URL is not configured.', { isNetworkError: true });
+    throw new ApiRequestError('Backend API URL is not configured. Set NEXT_PUBLIC_API_URL.', { isNetworkError: true });
   }
+
+  const auth = currentAuthToken();
 
   let response: Response;
   try {
@@ -65,6 +126,8 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}),
         ...(options.headers || {}),
       },
     });
@@ -80,6 +143,12 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
     payload = await response.json() as { status?: 'success' | 'error'; data?: T; message?: string };
   } catch {
     payload = undefined;
+  }
+
+  if (response.status === 401 && auth.token && auth.role) {
+    // Token expired or revoked: drop it and the local session so the dashboard returns to login.
+    setAuthToken(auth.role);
+    clearCurrentSession(auth.role);
   }
 
   if (!response.ok) {
@@ -358,13 +427,16 @@ const notifyUserSessionUpdated = () => {
   window.dispatchEvent(new CustomEvent(USER_SESSION_UPDATED_EVENT));
 };
 
-export const DEMO_CREDENTIALS: Record<ManagedUserRole, { email: string; password: string; label: string }> = {
-  admin: { email: 'admin@ams.com.bd', password: 'password123', label: 'Admin' },
-  officer: { email: 'rahim@dae.gov.bd', password: 'password123', label: 'Officer' },
-  vendor: { email: 'vendor@ams.com.bd', password: 'password123', label: 'Vendor' },
-  company: { email: 'company@ams.com.bd', password: 'password123', label: 'Company' },
-  farmer: { email: 'abdul.karim@farmer.com', password: 'password123', label: 'Farmer' },
-};
+/** Demo quick-login accounts. Only populated in local mock mode, never in a real deployment. */
+export const DEMO_CREDENTIALS: Partial<Record<ManagedUserRole, { email: string; password: string; label: string }>> = MOCK_MODE
+  ? {
+    admin: { email: 'admin@ams.com.bd', password: 'password123', label: 'Admin' },
+    officer: { email: 'rahim@dae.gov.bd', password: 'password123', label: 'Officer' },
+    vendor: { email: 'vendor@ams.com.bd', password: 'password123', label: 'Vendor' },
+    company: { email: 'company@ams.com.bd', password: 'password123', label: 'Company' },
+    farmer: { email: 'abdul.karim@farmer.com', password: 'password123', label: 'Farmer' },
+  }
+  : {};
 
 const DEFAULT_ROLE_USERS: DashboardRoleUser[] = [
   ...MOCK_FARMERS.map((farmer) => ({
@@ -1161,6 +1233,11 @@ const setCurrentRoleUserId = (userId: string) => {
 
 const clearCurrentSession = (role?: ManagedUserRole) => {
   if (!canUseStorage()) return;
+  if (role) {
+    setAuthToken(role);
+  } else {
+    writeAuthTokens({});
+  }
   if (!role) {
     window.localStorage.removeItem(CURRENT_ROLE_USER_STORAGE_KEY);
     window.localStorage.removeItem(CURRENT_FARMER_STORAGE_KEY);
@@ -1279,14 +1356,19 @@ const getCurrentRoleUser = (role?: ManagedUserRole): DashboardRoleUser | undefin
   return undefined;
 };
 
-const persistApiUserSession = (user?: DashboardRoleUser) => {
+const persistApiUserSession = (user?: DashboardRoleUser, token?: string) => {
   if (!user) return;
 
+  if (token) {
+    setAuthToken(user.role, token);
+  }
+
+  // Real passwords never live in the browser; the cached profile keeps an empty placeholder.
   const users = readRoleUsersStore();
   const existing = users.some((item) => item.id === user.id);
   writeRoleUsersStore(existing
-    ? users.map((item) => (item.id === user.id ? { ...item, ...user, password: item.password || user.password || 'password123' } : item))
-    : [{ ...user, password: user.password || 'password123' }, ...users]);
+    ? users.map((item) => (item.id === user.id ? { ...item, ...user, password: MOCK_MODE ? item.password : '' } : item))
+    : [{ ...user, password: '' }, ...users]);
   setCurrentRoleUserId(user.id);
   if (user.role === 'farmer') {
     setCurrentFarmerId(user.id);
@@ -1382,7 +1464,7 @@ export const authService = {
     purpose: 'login' | 'registration' = 'login',
     name?: string,
   ): Promise<{ success: boolean; message: string; otpToken?: string }> {
-    return apiOrMock('/auth/send-otp', async () => {
+    const result = await apiOrMock<{ success: boolean; message: string; otpToken?: string }>('/auth/send-otp', async () => {
     await delay(800);
     const normalizedEmail = email.trim().toLowerCase();
     if (purpose === 'registration') {
@@ -1411,6 +1493,13 @@ export const authService = {
     console.log(`[MOCK] Login OTP sent to ${email}`);
     return { success: true, message: 'OTP sent successfully to email', otpToken };
     }, jsonBody({ email, role, purpose, name }));
+
+    // The server only accepts a code together with the token it issued for that send.
+    if (result.success && result.otpToken) {
+      writeMockOtpSession({ email: email.trim().toLowerCase(), role, otpToken: result.otpToken, purpose });
+    }
+
+    return result;
   },
 
   async verifyOTP(
@@ -1435,11 +1524,14 @@ export const authService = {
           });
         } else {
           clearMockOtpSession();
-          persistApiUserSession(result.user);
+          persistApiUserSession(result.user, result.token);
         }
       }
       return result;
     } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        return { success: false, message: error instanceof Error ? error.message : 'OTP verification failed.' } as { success: boolean };
+      }
       console.warn('[API] Falling back to local mock for /auth/verify-otp:', error);
     }
 
@@ -1488,11 +1580,14 @@ export const authService = {
       );
       if (result.success) {
         clearMockOtpSession();
-        persistApiUserSession(result.user);
+        persistApiUserSession(result.user, result.token);
       }
       return result;
     } catch (error) {
       apiError = error;
+      if (!shouldFallbackToMock(error)) {
+        return { success: false, message: error instanceof Error ? error.message : 'Login failed.' };
+      }
       console.warn('[API] Login API failed, trying local/mock fallback for /auth/login:', error);
     }
 
@@ -1523,9 +1618,8 @@ export const authService = {
     data: Partial<DashboardRoleUser> & { role: ManagedUserRole; name: string; email?: string; phone: string; password: string; registrationOtpToken?: string },
   ): Promise<{ success: boolean; user?: DashboardRoleUser; message?: string }> {
     try {
-      const result = await apiRequest<{ success: boolean; user?: DashboardRoleUser; message?: string }>('/auth/register-role', jsonBody(data));
-      if (result.success) persistApiUserSession(result.user);
-      return result;
+      // Registration does not sign the user in; the page sends them to the login form next.
+      return await apiRequest<{ success: boolean; user?: DashboardRoleUser; message?: string }>('/auth/register-role', jsonBody(data));
     } catch (error) {
       if (!shouldFallbackToMock(error)) {
         return { success: false, message: error instanceof Error ? error.message : 'Registration failed.' };
@@ -1559,7 +1653,7 @@ export const authService = {
     return { success: true, user: newUser };
   },
 
-  async updateRoleUser(id: string, data: Partial<DashboardRoleUser>): Promise<{ success: boolean; user?: DashboardRoleUser }> {
+  async updateRoleUser(id: string, data: Partial<DashboardRoleUser> & { currentPassword?: string }): Promise<{ success: boolean; user?: DashboardRoleUser }> {
     try {
       const result = await apiRequest<{ success: boolean; user?: DashboardRoleUser }>(`/users/${encodeURIComponent(id)}`, {
         method: 'PATCH',
@@ -1587,7 +1681,8 @@ export const authService = {
 
     const updatedUsers = users.map((user) => {
       if (user.id !== id) return user;
-      updatedUser = { ...user, ...data, id: user.id, role: user.role, password: user.password };
+      const { currentPassword: _currentPassword, ...profileData } = data;
+      updatedUser = { ...user, ...profileData, id: user.id, role: user.role, password: user.password };
       return updatedUser;
     });
 
@@ -1694,11 +1789,25 @@ export const authService = {
 
   async quickDemoLogin(role: ManagedUserRole): Promise<{ success: boolean; role?: ManagedUserRole }> {
     const credential = DEMO_CREDENTIALS[role];
+    if (!credential) return { success: false };
     const result = await this.adminLogin(credential.email, credential.password, role);
     return { success: result.success, role: result.role as ManagedUserRole | undefined };
   },
 
   logout(role?: ManagedUserRole) {
+    // Revoke the server-side token too (best effort; the local session is cleared regardless).
+    const tokens = readAuthTokens();
+    const rolesToRevoke = role ? [role] : MANAGED_ROLES;
+    rolesToRevoke.forEach((item) => {
+      const token = tokens[item];
+      if (token && API_V1) {
+        void fetch(`${API_V1}/auth/logout`, {
+          method: 'POST',
+          headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
+      }
+    });
+
     clearMockOtpSession();
     clearCurrentSession(role);
   },
@@ -1788,6 +1897,7 @@ export const advisoryService = {
       mergeAdvisoryCases(cases);
       return cases;
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn(`[API] Falling back to local mock for ${path}:`, error);
     }
 
@@ -1847,6 +1957,7 @@ export const advisoryService = {
 
       return result;
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for /advisory-cases:', error);
     }
 
@@ -1932,6 +2043,7 @@ export const advisoryService = {
 
       return result;
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for advisory response:', error);
     }
 
@@ -2079,6 +2191,7 @@ export const productService = {
     try {
       return await apiRequest<{ success: boolean; productId: string }>('/products', jsonBody(data));
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for product creation:', error);
     }
 
@@ -2099,6 +2212,7 @@ export const productService = {
     try {
       return await apiRequest<{ success: boolean }>(`/products/${encodeURIComponent(productId)}`, { method: 'PATCH', body: JSON.stringify(data) });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for product update:', error);
     }
 
@@ -2114,6 +2228,7 @@ export const productService = {
     try {
       return await apiRequest<{ success: boolean }>(`/products/${encodeURIComponent(productId)}`, { method: 'DELETE' });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for product delete:', error);
     }
 
@@ -2126,6 +2241,7 @@ export const productService = {
     try {
       return await apiRequest<{ success: boolean }>(`/products/${encodeURIComponent(productId)}`, { method: 'PATCH', body: JSON.stringify({ stockQty }) });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for stock update:', error);
     }
 
@@ -2199,6 +2315,7 @@ export const orderService = {
     try {
       return await apiRequest<{ success: boolean }>(`/orders/${encodeURIComponent(orderId)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for order status:', error);
     }
 
@@ -2250,6 +2367,7 @@ export const cartService = {
     try {
       return await apiRequest<{ success: boolean; message?: string }>(`/farmers/${encodeURIComponent(farmerId)}/cart`, jsonBody({ productId, quantity }));
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for add to cart:', error);
     }
 
@@ -2281,6 +2399,7 @@ export const cartService = {
     try {
       return await apiRequest<{ success: boolean }>(`/farmers/${encodeURIComponent(farmerId)}/cart/${encodeURIComponent(productId)}`, { method: 'PATCH', body: JSON.stringify({ quantity }) });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for cart update:', error);
     }
 
@@ -2297,6 +2416,7 @@ export const cartService = {
     try {
       return await apiRequest<{ success: boolean }>(`/farmers/${encodeURIComponent(farmerId)}/cart/${encodeURIComponent(productId)}`, { method: 'PATCH', body: JSON.stringify({ quantity: 0 }) });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for cart remove:', error);
     }
 
@@ -2309,6 +2429,7 @@ export const cartService = {
     try {
       return await apiRequest<{ success: boolean }>(`/farmers/${encodeURIComponent(farmerId)}/cart`, { method: 'DELETE' });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for cart clear:', error);
     }
 
@@ -2331,6 +2452,7 @@ export const userSettingsService = {
     try {
       return await apiRequest<{ success: boolean }>(`/settings/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify(settings) });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for user settings:', error);
     }
 
@@ -2458,6 +2580,7 @@ export const cropService = {
     try {
       return await apiRequest<{ success: boolean; listingId?: string }>('/crop-listings', jsonBody(data));
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for crop listing creation:', error);
     }
 
@@ -2493,6 +2616,7 @@ export const cropService = {
         body: JSON.stringify(data),
       });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for crop listing update:', error);
     }
 
@@ -2510,6 +2634,7 @@ export const cropService = {
     try {
       return await apiRequest<{ success: boolean }>(`/crop-listings/${encodeURIComponent(listingId)}`, { method: 'DELETE' });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for crop listing delete:', error);
     }
 
@@ -2618,6 +2743,7 @@ export const cropService = {
       emitNotificationsUpdated();
       return result;
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local/mock flow for crop interest:', error);
     }
 
@@ -2679,6 +2805,7 @@ export const cropService = {
           new Date(b.confirmedAt || 0).getTime() - new Date(a.confirmedAt || 0).getTime()
         ));
       } catch (error) {
+        if (!shouldFallbackToMock(error)) throw error;
         console.warn('[API] Falling back to local/mock flow for company deals:', error);
       }
     }
@@ -2724,6 +2851,7 @@ export const cropService = {
           new Date(b.confirmedAt || 0).getTime() - new Date(a.confirmedAt || 0).getTime()
         ));
       } catch (error) {
+        if (!shouldFallbackToMock(error)) throw error;
         console.warn(`[API] Falling back to local/mock flow for farmer deals for ${farmerId}:`, error);
       }
     }
@@ -2849,8 +2977,8 @@ export const cropService = {
       return result;
     } catch (error) {
       const allowLocalFallback = shouldFallbackToMock(error)
-        || (error instanceof ApiRequestError && error.status === 404 && Boolean(resolvedTargetDeal || options?.dealContext?.listingId))
-        || (error instanceof ApiRequestError && typeof error.status === 'number' && error.status >= 500);
+        || (MOCK_MODE && error instanceof ApiRequestError && error.status === 404 && Boolean(resolvedTargetDeal || options?.dealContext?.listingId))
+        || (MOCK_MODE && error instanceof ApiRequestError && typeof error.status === 'number' && error.status >= 500);
       if (!allowLocalFallback) {
         return {
           success: false,
@@ -2980,6 +3108,7 @@ export const priceService = {
     try {
       return await apiRequest<{ success: boolean }>('/price-alerts', jsonBody({ farmerId, cropType }));
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for price alert:', error);
     }
 
@@ -3000,6 +3129,7 @@ export const weatherService = {
 
       return await apiRequest<WeatherForecast>(`/weather?${params.toString()}`);
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[WEATHER] Falling back to Open-Meteo / mock forecast:', error);
 
       try {
@@ -3032,6 +3162,7 @@ export const notificationService = {
           new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
         ));
       } catch (error) {
+        if (!shouldFallbackToMock(error)) throw error;
         console.warn(`[API] Falling back to local/mock notifications for ${userId}:`, error);
       }
     }
@@ -3054,6 +3185,7 @@ export const notificationService = {
       emitNotificationsUpdated();
       return result;
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for notification read:', error);
     }
 
@@ -3076,6 +3208,7 @@ export const notificationService = {
       emitNotificationsUpdated();
       return result;
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for notifications read all:', error);
     }
 
@@ -3263,6 +3396,7 @@ export const adminService = {
     try {
       return await apiRequest<{ success: boolean; tenantId: string }>('/admin/tenants', jsonBody(data));
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for tenant creation:', error);
     }
 
@@ -3294,6 +3428,7 @@ export const adminService = {
     try {
       return await apiRequest<{ success: boolean }>(`/admin/tenants/${encodeURIComponent(tenantId)}`, { method: 'PATCH', body: JSON.stringify(data) });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for tenant update:', error);
     }
 
@@ -3358,17 +3493,17 @@ export const adminService = {
     region: string;
   }): Promise<{ success: boolean; officerId: string }> {
     try {
-      const result = await apiRequest<{ success: boolean; user?: DashboardRoleUser }>('/auth/register-role', jsonBody({
-        role: 'officer',
+      // The officer signs in with an email OTP; the server sets a random password nobody sees.
+      const result = await apiRequest<{ success: boolean; officerId?: string }>('/admin/officers', jsonBody({
         name: data.name,
         email: data.email,
         phone: data.phone,
-        password: 'password123',
         district: data.region.split(',')[0]?.trim() || '',
         regionDistricts: data.region.split(',').map((item) => item.trim()).filter(Boolean),
       }));
-      return { success: result.success, officerId: result.user?.id || '' };
+      return { success: result.success, officerId: result.officerId || '' };
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for officer creation:', error);
     }
 
@@ -3431,6 +3566,7 @@ export const adminService = {
         };
       });
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for admin vendors:', error);
     }
 
@@ -3519,6 +3655,7 @@ export const adminService = {
           .map((item) => ({ id: item.id, type: 'case', label: `${item.id} · ${item.cropType}`, href: '/dashboard/admin/advisory' })),
       ].slice(0, 10);
     } catch (error) {
+      if (!shouldFallbackToMock(error)) throw error;
       console.warn('[API] Falling back to local mock for global search:', error);
     }
 

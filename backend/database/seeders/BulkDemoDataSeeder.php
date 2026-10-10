@@ -27,6 +27,11 @@ class BulkDemoDataSeeder extends Seeder
 
     public function run(): void
     {
+        // Demo accounts all use the password "password123"; never load them into production.
+        if (app()->isProduction()) {
+            throw new \RuntimeException('Demo seed data must not be loaded in production.');
+        }
+
         $now = now();
 
         $this->seedTenants($now);

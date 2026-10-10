@@ -90,7 +90,7 @@ class DeleteAccountTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $response = $this->deleteJson('/api/v1/users/usr_far_901');
+        $response = $this->actingAsApiUser('usr_far_901')->deleteJson('/api/v1/users/usr_far_901');
 
         $response->assertOk()
             ->assertJsonPath('data.success', true);
@@ -210,7 +210,7 @@ class DeleteAccountTest extends TestCase
         ]);
 
         foreach (['usr_off_902', 'usr_vnd_902', 'usr_cmp_902', 'usr_adm_902'] as $publicId) {
-            $this->deleteJson("/api/v1/users/{$publicId}")
+            $this->actingAsApiUser($publicId)->deleteJson("/api/v1/users/{$publicId}")
                 ->assertOk()
                 ->assertJsonPath('data.success', true);
         }

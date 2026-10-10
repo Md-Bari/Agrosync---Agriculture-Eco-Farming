@@ -106,7 +106,7 @@ class CropInterestNotificationTest extends TestCase
     {
         $this->seedDealFlowData();
 
-        $response = $this->postJson('/api/v1/crop-deals/interest', [
+        $response = $this->actingAsApiUser('usr_cmp_910')->postJson('/api/v1/crop-deals/interest', [
             'listingId' => 'CRP-910',
             'companyId' => 'cmp_910',
             'companyName' => 'Buyer 910 Ltd',
@@ -139,14 +139,14 @@ class CropInterestNotificationTest extends TestCase
     {
         $this->seedDealFlowData();
 
-        $interest = $this->postJson('/api/v1/crop-deals/interest', [
+        $interest = $this->actingAsApiUser('usr_cmp_910')->postJson('/api/v1/crop-deals/interest', [
             'listingId' => 'CRP-910',
             'companyId' => 'cmp_910',
             'companyName' => 'Buyer 910 Ltd',
         ]);
         $dealId = $interest->json('data.matchId');
 
-        $response = $this->patchJson("/api/v1/crop-deals/{$dealId}/status", [
+        $response = $this->actingAsApiUser('usr_far_910')->patchJson("/api/v1/crop-deals/{$dealId}/status", [
             'status' => 'confirmed',
             'actorRole' => 'farmer',
             'actorId' => 'farmer_910',
@@ -177,14 +177,14 @@ class CropInterestNotificationTest extends TestCase
     {
         $this->seedDealFlowData();
 
-        $interest = $this->postJson('/api/v1/crop-deals/interest', [
+        $interest = $this->actingAsApiUser('usr_cmp_910')->postJson('/api/v1/crop-deals/interest', [
             'listingId' => 'CRP-910',
             'companyId' => 'cmp_910',
             'companyName' => 'Buyer 910 Ltd',
         ]);
         $dealId = $interest->json('data.matchId');
 
-        $response = $this->patchJson("/api/v1/crop-deals/{$dealId}/status", [
+        $response = $this->actingAsApiUser('usr_far_910')->patchJson("/api/v1/crop-deals/{$dealId}/status", [
             'status' => 'cancelled',
             'actorRole' => 'farmer',
             'actorId' => 'farmer_910',

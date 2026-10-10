@@ -8,7 +8,8 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (! Schema::hasColumn('users', 'avatar')) {
+        // SQLite has no MODIFY and does not enforce VARCHAR length, so nothing to change.
+        if (! Schema::hasColumn('users', 'avatar') || DB::getDriverName() === 'sqlite') {
             return;
         }
 
@@ -23,7 +24,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (! Schema::hasColumn('users', 'avatar')) {
+        if (! Schema::hasColumn('users', 'avatar') || DB::getDriverName() === 'sqlite') {
             return;
         }
 

@@ -35,6 +35,7 @@ export function useRoleUserContext({ role, fallbackUser }: UseRoleUserContextOpt
         .then((notifications) => {
           setNotificationCount(notifications.filter((notification) => !notification.isRead).length);
         })
+        .catch(() => undefined)
         .finally(() => setLoading(false));
     };
 
